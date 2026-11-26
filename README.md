@@ -30,6 +30,14 @@
 | **Caches and logs** | **Build folders** |
 | ![Caches and logs list with plain-language explanations](docs/screenshots/caches.png) | ![Cargo target and npm node_modules folders found in projects](docs/screenshots/build-folders.png) |
 
+## Numbers
+
+| Metric | Value | How to check | Date |
+| --- | --- | --- | --- |
+| Tests that pass | 73 | `cargo test --locked` | 2026-11-26 |
+| Tests ignored by default | 2 | `cargo test --locked` | 2026-11-26 |
+| Lines of Rust | 8,783 | `git ls-files -z '*.rs' \| xargs -0 awk '1' \| wc -l` | 2026-11-26 |
+
 ## Install
 
 MacCleanUp runs on Macs with Apple silicon (M1 or later) and macOS 12 or later. It is one self-contained app: nothing else needs to be installed, and it keeps no settings files.
@@ -112,7 +120,7 @@ The review dialog lists every path that will move and its size. `Return` and `Es
 
 Sizes are space used on disk (allocated blocks), and a file with several hard links counts once per measured item, as `du` reports. Sparse files count only the blocks they use. APFS clones that share blocks can still be counted more than once.
 
-Scans measure folders on all processor cores. On a 10-core Apple Silicon Mac, a folder of about 780,000 files and 165 GB took 3.3 to 4.3 seconds to size, against 14.5 to 17.6 seconds for a single-threaded walk of the same folder, with files already in memory. The total matched `du -sk` to the byte. **Stop** ends a scan within a moment, and a stopped view stays unscanned until you scan it again.
+Scans measure folders on all processor cores. A test checks the measured size against `du -sk` on a folder that holds a hard link and a sparse file. **Stop** ends a scan within a moment, and a stopped view stays unscanned until you scan it again.
 
 ## Build and test
 
@@ -126,129 +134,131 @@ The build creates `build/<version>/MacCleanUp.app` from a fresh staging folder, 
 
 The interface tests run headless through `egui_kittest` and never open a window. Set `MACCLEANUP_SHOTS=<folder>` to save a PNG of each tested screen; the screenshots on this page come from those tests.
 
+Two tests do not run by default. One needs a root-owned file that only `sudo` can make, and the other reads the real Library folders of the Mac it runs on. The comment above each test gives the command that runs it.
+
 In an iCloud-synced Desktop or Documents folder, macOS can attach `FinderInfo`, `macl`, or provenance attributes after packaging or first launch. A later strict signature check can then report `resource fork, Finder information, or similar detritus not allowed`, while the non-strict check passes.
 
 ## Source layout
 
 - `src/scanner.rs`: bounded read-only inventories and searches, parallel on-disk sizing, containment, and identity checks
 - `src/trash.rs`: reviewed operations through `NSFileManager.trashItemAtURL`, the Finder fallback, and the shared uninstall preview
+- `src/leftovers.rs`: startup items whose program is gone, and settings, data, or privileged helpers named after apps that are not installed
 - `src/system.rs`: macOS system metrics, volume use, the storage breakdown, Trash size, and local snapshots
+- `src/model.rs`: the item types that the library and the window share, and size formatting
+- `src/lib.rs`: the library's module list
 - `src/gui/state.rs`: views, background jobs, selection, review dialogs, and the activity log, independent of drawing
 - `src/gui/mod.rs`: window layout, views, dialogs, and headless interface tests
 - `src/gui/theme.rs`: colors, fonts, and widget style
 - `src/gui/treemap.rs`: squarified treemap layout for the disk map
 - `src/main.rs`: command-line flags and window setup
 
-<!-- git-understand:start -->
+<!-- diagrams:start -->
 ## Project map
 
-MacCleanUp has two parts: a library that finds, sizes and guards files, and an egui window that drives it. All 39 links between the two point from the window into the library, so the library does not depend on the interface. The structure shown here comes from version 0.4.0, and the history is current.
+MacCleanUp has two parts: a library that finds, sizes and guards files, and an egui window that drives it. The window is part of the binary, so the library does not depend on the interface.
 
-- src/scanner.rs has the most incoming links (6). It holds the path guards and identity checks that src/trash.rs runs before every move.
+- src/scanner.rs and src/model.rs have the most incoming links, 6 each. src/scanner.rs holds the path guards and identity checks that src/trash.rs runs before every move.
 - Only src/trash.rs moves anything to the Trash. The window reaches it through accept_confirmation in src/gui/state.rs.
-- format_bytes in src/model.rs is the most called function, with 12 calls.
-- src/gui/mod.rs is the largest hotspot, at 2,922 lines.
+- src/leftovers.rs came with version 0.5.0. It finds startup items and app data that no installed app uses, and it reuses the guards in src/scanner.rs.
+- src/gui/mod.rs is the largest file and the most changed, at 3,019 lines and 8 commits.
 
 ### Architecture
 
-The GUI layer makes 39 links into the Core Library layer, and 32 of them are calls. No link goes back from the library to the GUI, so the library tests run without a window.
+src/main.rs is the only entry point. It hands everything to the Core layer, which holds both the library and the window. Tooling is the two build scripts. The two Vendored files are not borrowed code. They are one-line stubs in the test fixture's node_modules folders, so the build-folder search has something to find.
 
 ```mermaid
 flowchart TD
-  L0["GUI Application Layer<br/>5 files"]
-  L1["Build, Packaging and Docs<br/>4 files"]
-  L2["Core Library Layer<br/>5 files"]
-  L0 -->|39| L2
-  L1 -->|7| L0
-  L1 -->|4| L2
+  L0["Entry points<br/>1 file"]
+  L1["Tooling<br/>2 files"]
+  L2["Vendored<br/>2 files"]
+  L3["Core<br/>10 files"]
+  L0 -->|1| L3
 ```
 
 ### Dependencies
 
 src/scanner.rs and src/model.rs are the two files that most others depend on. src/trash.rs calls the guard and identity functions in src/scanner.rs before each move.
 
-6 of 14 files: the most connected ones, test files left out, joined by the 10 strongest of the 30 links between them.
+7 of 11 files: the most connected ones, test files left out, joined by the 10 strongest of the 26 links between them.
 
 ```mermaid
 flowchart LR
-  subgraph G0["GUI Application Layer"]
+  subgraph G1["Core"]
     direction TB
-    N1["mod.rs"]
+    N0["mod.rs"]
+    N1["scanner.rs"]
+    N2["trash.rs"]
     N3["state.rs"]
+    N4["leftovers.rs"]
+    N5["model.rs"]
+    N6["lib.rs"]
   end
-  subgraph G2["Core Library Layer"]
-    direction TB
-    N2["scanner.rs"]
-    N4["trash.rs"]
-    N6["model.rs"]
-    N9["system.rs"]
-  end
-  N1 --> N3
-  N1 --> N6
-  N4 --> N2
-  N3 --> N2
-  N3 --> N4
-  N3 --> N9
-  N1 --> N2
-  N9 --> N2
-  N3 --> N6
-  N1 --> N4
+  N0 --> N1
+  N0 --> N5
+  N1 --> N5
+  N2 --> N1
+  N2 --> N5
+  N3 --> N1
+  N3 --> N5
+  N4 --> N1
+  N4 --> N5
+  N6 --> N1
 ```
 
 ### Composition
 
-The Rust source is 7,728 lines in 10 files. Cargo.lock is most of the rest, at 4,638 lines.
+The Rust source is 8,783 lines in 11 files. Cargo.lock is most of the rest, at 4,638 lines.
 
-49 files, 12909 lines.
+51 files, 13999 lines.
 
 | Language | Files | Lines |
 |---|---:|---:|
-| Rust | 10 | 7728 |
+| Rust | 11 | 8783 |
 | Lockfile | 1 | 4638 |
-| Docs | 3 | 256 |
+| Docs | 3 | 267 |
 | Shell | 2 | 155 |
-| Other | 26 | 85 |
-| TOML | 1 | 32 |
+| Other | 27 | 104 |
+| TOML | 1 | 37 |
 | Config | 3 | 12 |
 | JavaScript | 2 | 2 |
 
 ### History
 
-The history is short and comes from one day. scripts/build-app.sh changes with the source files because each release raises its version number, not because the code depends on it.
+The history is short. scripts/build-app.sh changes with the source files because each release raises its version number, not because the code depends on it.
 
-10 commits, 2026-11-23 to 2026-11-24.
+13 commits, 2026-11-23 to 2026-11-24.
 
 | Hotspot | Commits | Lines |
 |---|---:|---:|
-| `src/gui/mod.rs` | 7 | 2922 |
-| `src/gui/state.rs` | 6 | 1499 |
+| `src/gui/mod.rs` | 8 | 3019 |
+| `src/gui/state.rs` | 7 | 1576 |
+| `src/scanner.rs` | 4 | 1602 |
 | `src/system.rs` | 6 | 834 |
-| `src/scanner.rs` | 3 | 1589 |
-| `src/trash.rs` | 4 | 438 |
+| `src/trash.rs` | 5 | 462 |
 | `scripts/build-app.sh` | 7 | 87 |
-| `src/model.rs` | 2 | 146 |
+| `src/model.rs` | 3 | 154 |
 | `src/gui/theme.rs` | 2 | 134 |
 
-src/gui/mod.rs, src/gui/state.rs and src/scanner.rs are complex, and together they hold 6,010 of the 7,728 Rust lines. Most of the risk sits in those three files.
+src/gui/mod.rs, src/gui/state.rs and src/scanner.rs are complex, and together they hold 6,197 of the 8,783 Rust lines. Most of the risk sits in those three files.
 
 | Changed together | Commits | Linked in code |
 |---|---:|---|
+| `src/gui/mod.rs` + `src/gui/state.rs` | 7 | yes |
 | `scripts/build-app.sh` + `src/gui/mod.rs` | 6 | no |
 | `scripts/build-app.sh` + `src/gui/state.rs` | 6 | no |
 | `scripts/build-app.sh` + `src/system.rs` | 6 | no |
-| `src/gui/mod.rs` + `src/gui/state.rs` | 6 | yes |
-| `src/gui/mod.rs` + `src/system.rs` | 6 | no |
+| `src/gui/mod.rs` + `src/system.rs` | 6 | yes |
 | `src/gui/state.rs` + `src/system.rs` | 6 | yes |
 | `scripts/build-app.sh` + `src/trash.rs` | 4 | no |
-| `scripts/build-app.sh` + `src/scanner.rs` | 3 | no |
+| `src/gui/mod.rs` + `src/scanner.rs` | 4 | yes |
 
-<!-- git-understand:end -->
+<!-- diagrams:end -->
 
 ## Reference
 
 Mole 1.74.0 (GPL-3.0) supplied the behavior and safety requirements reviewed for this independent implementation. No Mole scripts or binaries are bundled or invoked.
 
-Version 0.4.5 does not implement Mole's Optimize maintenance tasks (it has only the read-only CPU check), Purge, Slim, Touch ID, update, or administrator-only workflows.
+Version 0.5.0 does not implement Mole's Optimize maintenance tasks (it has only the read-only CPU check), Purge, Slim, Touch ID, update, or administrator-only workflows.
 
 ## License
 
