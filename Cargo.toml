@@ -5,6 +5,11 @@ edition = "2021"
 rust-version = "1.85"
 description = "A standalone native macOS cleanup utility"
 license = "MIT"
+repository = "https://github.com/dominicferri/MacCleanUp"
+readme = "README.md"
+keywords = ["macos", "cleanup", "disk-usage", "treemap", "egui"]
+categories = ["gui", "filesystem", "os::macos-apis"]
+publish = false
 
 [dependencies]
 eframe = "0.37"
